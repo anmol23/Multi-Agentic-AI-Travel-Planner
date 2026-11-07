@@ -7,7 +7,7 @@ load_dotenv()
 os.environ["SSL_CERT_FILE"] = certifi.where()
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 
-from typing import TypedDict, Annotated
+from typing import TypedDict, Annotated, Any
 import operator
 import uuid
 import asyncio
@@ -24,11 +24,15 @@ from langchain_core.messages import (
 )
 from langchain_groq import ChatGroq
 from langchain.chat_models import init_chat_model
+from langgraph.prebuilt import create_react_agent
+
 
 
 # from tools.tavily_tool import tavily_search
+
 from tools.flight_tool import search_flights
-from mcp_client import tavily_mcp_search, extract_destination
+
+from mcp_client import get_tavily_tools, extract_destination
 
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY")
 
@@ -57,7 +61,12 @@ def get_database_url():
 # LLM
 # =========================
 
-llm = init_chat_model("google_genai:gemini-3.6-flash")
+llm = ChatGroq(
+    model="openai/gpt-oss-20b",
+    api_key=os.getenv("GROQ_API_KEY"),    max_tokens=300
+
+)
+
 
 
 
@@ -80,11 +89,49 @@ class TravelState(TypedDict):
 # Hotel Agent using Tavily MCP
 # =========================
 
-def hotel_agent(state: TravelState):
-    query = f"Top 2 hotels for {state['user_query']}"
+# Create Tavily Agent
+async def create_tavily_agent():
+
+    # Get tools from Tavily MCP server
+    tavily_tools = await get_tavily_tools()
     
-    #calling tavily search tool from mcp_search function defined in mcp client
-    hotel_results = asyncio.run(tavily_mcp_search("tavily_search",query))
+  
+    # Create agent with all available Tavily tools
+    tavily_agent = create_react_agent(
+        model=llm,
+        tools=tavily_tools,
+        prompt="""
+        You are a web research agent.
+
+        You have access to multiple Tavily tools.
+        Choose the appropriate tool based on the user's query.
+.
+        2. Return only the 2 most relevant results.
+        3. Keep each result under 100 words.
+        4. Do not call multiple tools unless absolutely necessary.
+        5. Do not use crawl or research for simple hotel searches.
+        6. Provide a concise final answer.
+        """,
+        checkpointer=False
+    )
+
+    return tavily_agent
+
+
+tavily_agent = asyncio.run(create_tavily_agent())
+
+
+def hotel_agent(state: TravelState):
+
+    query = f"Find the top 2 hotels for {state['user_query']}"
+
+    response = asyncio.run(
+        tavily_agent.ainvoke({
+            "messages": [("user", query)]
+        })
+    )
+
+    hotel_results = response["messages"][-1].content
 
     return {
         "hotel_results": hotel_results,
@@ -93,6 +140,23 @@ def hotel_agent(state: TravelState):
         ],
         "llm_calls": state.get("llm_calls", 0) + 1
     }
+
+
+
+
+# def hotel_agent(state: TravelState):
+#     query = f"Top 2 hotels for {state['user_query']}"
+    
+#     #calling tavily search tool from mcp_search function defined in mcp client
+#     hotel_results = asyncio.run(tavily_mcp_search("tavily_search",query))
+
+#     return {
+#         "hotel_results": hotel_results,
+#         "messages": [
+#             AIMessage(content="Hotel information fetched.")
+#         ],
+#         "llm_calls": state.get("llm_calls", 0) + 1
+#     }
 
 
 

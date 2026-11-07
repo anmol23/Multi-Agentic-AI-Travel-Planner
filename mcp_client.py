@@ -13,17 +13,16 @@ from langchain.chat_models import init_chat_model
 load_dotenv()
 
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
-AVIATION_STACK_API_KEY = os.getenv("AVIATIONSTACK_API_KEY")
+
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-
-AVIATION_ENV = os.environ.copy()
-AVIATION_ENV["AVIATION_STACK_API_KEY"] = (
-    AVIATION_STACK_API_KEY or ""
-)
-
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY")
 
-llm = init_chat_model("google_genai:gemini-3.6-flash")
+
+llm = ChatGroq(
+    model="openai/gpt-oss-20b",
+    api_key=os.getenv("GROQ_API_KEY"),    max_tokens=300
+
+)
 
 
 # ==========================================
@@ -59,62 +58,44 @@ client = MultiServerMCPClient(
 # Tavily MCP tool
 # ==========================================
 
-search_tool = None
 
-async def initialize_tavily():
-    """
-    Initialize only Tavily, not Aviation STack
-"""
-    
-    global search_tool
-    if search_tool is not None:
-        return
+async def get_tavily_tools():
 
+    tools = await client.get_tools(server_name="tavily")
 
-    tools = await client.get_tools(
-        server_name="tavily"
-    )
+    print("\nAvailable Tavily MCP tools:")
 
-    #store all tools within tavily mcp server
-    search_tool = {
-        tool.name: tool
-        for tool in tools
-    }
+    for tool in tools:
+        print(tool.name)
+
+    return tools
 
 
-    if not search_tool:
-        raise RuntimeError(
-            "Tavily Search MCP connected but "
-            "returned no tools."
-        )
-    
+
+# async def tavily_mcp_search(tool_name: str,  query: str):
+#     await get_tavily_tools()
 
 
-async def tavily_mcp_search(tool_name: str,  query: str):
-    await initialize_tavily()
+#     tool_to_invoke = search_tool.get(tool_name)
 
+#     if tool_to_invoke is None:
+#         available_tools = ", ".join(
+#             sorted(search_tool.keys())
+#         )
 
-    tool_to_invoke = search_tool.get(tool_name)
+#         raise ValueError(
+#             f"TAVILY tool '{tool_name}' "
+#             "was not found. "
+#             f"Available tools: "
+#             f"{available_tools or 'none'}"
+#         )
 
-    if tool_to_invoke is None:
-        available_tools = ", ".join(
-            sorted(search_tool.keys())
-        )
-
-        raise ValueError(
-            f"TAVILY tool '{tool_name}' "
-            "was not found. "
-            f"Available tools: "
-            f"{available_tools or 'none'}"
-        )
-
-    result = await tool_to_invoke.ainvoke(
-            {
-                "query": query
-            }
-        )
-    return result
-
+#     result = await tool_to_invoke.ainvoke(
+#             {
+#                 "query": query
+#             }
+#         )
+#     return result
 
 
 
