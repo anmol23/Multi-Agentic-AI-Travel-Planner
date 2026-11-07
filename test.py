@@ -17,25 +17,26 @@
 
 
 
-# from backend import run_travel_agent
+from backend import run_travel_agent
 
-# response = run_travel_agent(user_input="I want a 1 day trip to Bali", thread_id="test")
-# print (response['answer'][0]['text']) 
-
-
-import asyncio
-from backend import tavily_agent
-
-async def main():
-
-    response = await tavily_agent.ainvoke({
-        "messages": [
-            ("user", "Find 2 budget hotels in Bali. Be brief.")
-        ]
-    })
-
-    print(response["messages"][-1].content)
+response = run_travel_agent(user_input="I want a 1 day trip to Bali, be very brief", thread_id="test")
+print (response['answer']) 
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
+# import asyncio
+# from backend import tavily_agent
+
+# async def main():
+
+#     response = await tavily_agent.ainvoke({
+#         "messages": [
+#             ("user", "Find 2 budget hotels in Bali. Be brief.")
+#         ]
+#     })
+
+#     print(response["messages"][-1].content)
+
+
+# if __name__ == "__main__":
+#     asyncio.run(main())
+
