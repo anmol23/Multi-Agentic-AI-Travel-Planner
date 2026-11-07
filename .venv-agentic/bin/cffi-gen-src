@@ -1,0 +1,8 @@
+#!/bin/sh
+'''exec' "/Users/anmol/Downloads/jobs/Gen AI/Multi Agentic AI/Multi-Agentic-AI-Travel-Planner/.venv-agentic/bin/python" "$0" "$@"
+' '''
+import sys
+from cffi._cffi_gen_src import run
+if __name__ == '__main__':
+    sys.argv[0] = sys.argv[0].removesuffix('.exe')
+    sys.exit(run())

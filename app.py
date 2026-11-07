@@ -11,6 +11,9 @@ from pydantic import BaseModel
 #importing run agent from backedn
 from backend import run_travel_agent
 
+import nest_asyncio
+nest_asyncio.apply()
+
 BASE_DIR = Path(__file__).resolve().parent
 
 app = FastAPI(

@@ -10,7 +10,7 @@ os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 from typing import TypedDict, Annotated
 import operator
 import uuid
-
+import asyncio
 import psycopg
 from psycopg.rows import dict_row
 
@@ -23,8 +23,14 @@ from langchain_core.messages import (
     SystemMessage,
 )
 from langchain_groq import ChatGroq
-from tools.tavily_tool import tavily_search
+from langchain.chat_models import init_chat_model
+
+
+# from tools.tavily_tool import tavily_search
 from tools.flight_tool import search_flights
+from mcp_client import tavily_mcp_search, extract_destination
+
+os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY")
 
 
 def get_database_url():
@@ -42,14 +48,17 @@ def get_database_url():
     return database_url
 
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-if not GROQ_API_KEY:
-    raise ValueError("GROQ_API_KEY is missing. Please add it to your .env file.")
+# GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+# if not GROQ_API_KEY:
+#     raise ValueError("GROQ_API_KEY is missing. Please add it to your .env file.")
 
-llm = ChatGroq(
-    model="openai/gpt-oss-120b",
-    api_key=GROQ_API_KEY
-)
+
+# =========================
+# LLM
+# =========================
+
+llm = init_chat_model("google_genai:gemini-3.6-flash")
+
 
 
 # =========================
@@ -63,12 +72,33 @@ class TravelState(TypedDict):
     hotel_results: str
     itinerary: str
     llm_calls: int
+    weather_results: str
 
 
 
 # =========================
-# Flight Agent
+# Hotel Agent using Tavily MCP
 # =========================
+
+def hotel_agent(state: TravelState):
+    query = f"Top 2 hotels for {state['user_query']}"
+    
+    #calling tavily search tool from mcp_search function defined in mcp client
+    hotel_results = asyncio.run(tavily_mcp_search("tavily_search",query))
+
+    return {
+        "hotel_results": hotel_results,
+        "messages": [
+            AIMessage(content="Hotel information fetched.")
+        ],
+        "llm_calls": state.get("llm_calls", 0) + 1
+    }
+
+
+
+#=========================
+#Flight Agent using defined tool
+#=========================
 
 def flight_agent(state: TravelState):
     query = state["user_query"]
@@ -84,20 +114,92 @@ def flight_agent(state: TravelState):
 
 
 # =========================
-# Hotel Agent
+# Flight Agent using Aviation Stack MCP
 # =========================
 
-def hotel_agent(state: TravelState):
-    query = f"Best hotels for {state['user_query']}"
-    hotel_results = tavily_search(query)
 
-    return {
-        "hotel_results": hotel_results,
-        "messages": [
-            AIMessage(content="Hotel information fetched.")
-        ],
-        "llm_calls": state.get("llm_calls", 0) + 1
-    }
+# # Flight Tool Router Prompt
+# FLIGHT_AGENT_PROMPT = """
+# You are a travel flight expert.
+
+# User Query:
+# {query}
+
+# Airport Information:
+# {airport_data}
+
+# Airline Information:
+# {airline_data}
+
+# Generate:
+
+# 1. Likely departure airport
+# 2. Likely arrival airport
+# 3. Airlines serving this route
+# 4. Typical flight duration
+# 5. Estimated airfare range
+
+# Return concise travel guidance.
+# """
+
+
+
+# # Flight Agent
+# def flight_agent(state: TravelState):
+#     print("\nINSIDE FLIGHT AGENT\n")
+
+#     query = state["user_query"]
+
+#     try:
+
+#         airports = asyncio.run(
+#             aviation_mcp_call(
+#                 "list_airports"
+#             )
+#         )
+
+#         airlines = asyncio.run(
+#             aviation_mcp_call(
+#                 "list_airlines"
+#             )
+#         )
+
+
+#         print("\nAIRPORTS:", airports)
+#         print("\nAIRLINES:", airlines)
+
+#         prompt = FLIGHT_AGENT_PROMPT.format(
+#             query=query,
+#             airport_data=str(airports)[:3000],
+#             airline_data=str(airlines)[:3000]
+#         )
+
+#         response = llm.invoke([
+#             SystemMessage(
+#                 content="You are an expert travel flight planner."
+#             ),
+#             HumanMessage(content=prompt)
+#         ])
+
+#         flight_data = response.content
+
+#     except Exception as e:
+
+#         flight_data = f"Flight information unavailable: {str(e)}"
+
+#     return {
+#         "flight_results": flight_data,
+#         "messages": [
+#             AIMessage(
+#                 content="Flight recommendations generated"
+#             )
+#         ],
+#         "llm_calls": state.get("llm_calls", 0) + 1
+#     }
+
+
+
+
 
 
 
@@ -127,13 +229,11 @@ Make the itinerary practical, budget-aware, and easy to follow.
         HumanMessage(content=prompt)
     ])
 
-
     return {
         "itinerary": response.content,
         "messages": [response],
         "llm_calls": state.get("llm_calls", 0) + 1
     }
-
 
 
 
@@ -159,16 +259,12 @@ Itinerary:
 
 Format the final answer beautifully using these sections:
 
-1. Trip Summary
-2. Flight Information
-3. Hotel Suggestions
-4. Day-by-Day Itinerary
-5. Estimated Budget
-6. Final Recommendations
+1. Flight Information 
+2. Hotel Suggestions
+3. Summary of itinary in very short
 
 Important:
-- Be clear and practical.
-- Mention that live flight API may not provide ticket prices if pricing is unavailable.
+- Be clear and concise, in brief.
 - Keep the response useful for real travel planning.
 """
 
@@ -181,9 +277,6 @@ Important:
         "messages": [response],
         "llm_calls": state.get("llm_calls", 0) + 1
     }
-
-
-
 
 
 # =========================
@@ -218,9 +311,7 @@ _conn = psycopg.connect(
 checkpointer = PostgresSaver(_conn)
 checkpointer.setup()
 
-
 travel_graph = graph.compile(checkpointer=checkpointer)
-
 
 
 
@@ -231,12 +322,12 @@ travel_graph = graph.compile(checkpointer=checkpointer)
 def run_travel_agent(user_input: str, thread_id: str | None = None):
     if not thread_id:
         thread_id = f"user_{uuid.uuid4().hex}"
+
     config = {
         "configurable": {
             "thread_id": thread_id
         }
     }
-
 
     result = travel_graph.invoke(
         {
@@ -252,8 +343,14 @@ def run_travel_agent(user_input: str, thread_id: str | None = None):
         config=config
     )
 
-
     final_answer = result["messages"][-1].content
+
+    if isinstance(final_answer, list):
+        final_answer = "\n".join(
+            item["text"]
+            for item in final_answer
+            if isinstance(item, dict) and item.get("type") == "text"
+        )
 
     return {
         "thread_id": thread_id,
@@ -263,4 +360,3 @@ def run_travel_agent(user_input: str, thread_id: str | None = None):
         "itinerary": result.get("itinerary", ""),
         "llm_calls": result.get("llm_calls", 0),
     }
-
